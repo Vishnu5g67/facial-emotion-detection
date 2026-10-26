@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facial Emotion AI - Real-time Expression Recognition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card-bg: #141c2c;
+      --card-border: #1f2d45;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --text: #f3f4f6;
+      --text-muted: #94a3b8;
+      --accent: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: rgba(20, 28, 44, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+    }
+
+    .brand h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      background: #34d399;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #34d399;
+    }
+
+    main {
+      flex: 1;
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 2.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* Tabs */
+    .tabs-nav {
+      display: flex;
+      gap: 0.5rem;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 0.35rem;
+      max-width: 380px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.6rem 1rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      background: var(--primary);
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    /* Layout grid */
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .content-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .viewport-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .viewport-header {
+      padding: 0.85rem 1.25rem;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .viewport-body {
+      position: relative;
+      background: #000000;
+      min-height: 440px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    video {
+      display: none;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      max-height: 520px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .placeholder-prompt {
+      position: absolute;
+      text-align: center;
+      color: var(--text-muted);
+      padding: 2rem;
+    }
+
+    .placeholder-prompt span {
+      font-size: 3rem;
+      display: block;
+      margin-bottom: 0.75rem;
+    }
+
+    .viewport-footer {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      padding: 0.65rem 1.25rem;
+      border-radius: 10px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .btn:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-secondary {
+      background: #1f2d45;
+      color: var(--text);
+    }
+
+    .btn-secondary:hover {
+      background: #2a3b5c;
+    }
+
+    .btn-danger {
+      background: #ef4444;
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    /* Analytics Panel */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .panel-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 1.25rem;
+    }
+
+    .panel-title {
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 700;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .emotion-hero {
+      text-align: center;
+      padding: 1.25rem 0.5rem;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 12px;
+      margin-bottom: 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .emotion-emoji {
+      font-size: 2.75rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .emotion-name {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 0.25rem;
+    }
+
+    .emotion-confidence {
+      font-size: 0.85rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Bars */
+    .emotion-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+
+    .bar-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .bar-label-group {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.775rem;
+      color: var(--text-muted);
+    }
+
+    .bar-bg {
+      height: 8px;
+      background: #1b263b;
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 9999px;
+      transition: width 0.25s ease-out, background-color 0.25s;
+    }
+
+    /* Upload Area */
+    .dropzone {
+      border: 2px dashed var(--card-border);
+      border-radius: 12px;
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .dropzone:hover {
+      border-color: var(--primary);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .dropzone-icon {
+      font-size: 2.5rem;
+      margin-bottom: 0.75rem;
+      display: block;
+    }
+
+    .dropzone p {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    /* Notice banner */
+    .info-footer {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-icon">😊</div>
+      <div>
+        <h1>Facial Emotion AI</h1>
+      </div>
+    </div>
+    <div class="badge-status">
+      <div class="badge-dot"></div>
+      Model Active (CNN)
+    </div>
+  </header>
+
+  <main>
+    <div class="tabs-nav">
+      <button class="tab-btn active" id="tabLiveBtn" onclick="switchTab('live')">📹 Live Camera</button>
+      <button class="tab-btn" id="tabUploadBtn" onclick="switchTab('upload')">📁 Upload Photo</button>
+    </div>
+
+    <!-- LIVE CAMERA TAB -->
+    <div id="liveView" class="content-grid">
+      <div class="viewport-card">
+        <div class="viewport-header">
+          <span>Camera Viewport</span>
+          <span id="fpsCounter">FPS: --</span>
+        </div>
+        <div class="viewport-body">
+          <video id="webcamVideo" autoplay playsinline muted></video>
+          <canvas id="liveCanvas"></canvas>
+          <div id="livePrompt" class="placeholder-prompt">
+            <span>📷</span>
+            <p><strong>Camera is currently off.</strong></p>
+            <p style="font-size: 0.85rem; margin-top: 0.25rem;">Click 'Start Camera' below to begin real-time emotion recognition.</p>
+          </div>
+        </div>
+        <div class="viewport-footer">
+          <button id="toggleCameraBtn" class="btn" onclick="toggleCamera()">
+            ▶ Start Camera
+          </button>
+          <button id="switchCameraBtn" class="btn btn-secondary" onclick="switchFacingMode()" style="display:none;">
+            🔄 Flip Camera
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <div class="panel-card">
+          <div class="panel-title">
+            <span>Primary Emotion</span>
+            <span id="faceCountBadge" style="font-size: 0.75rem; color: var(--accent);">0 faces detected</span>
+          </div>
+          <div class="emotion-hero">
+            <div id="heroEmoji" class="emotion-emoji">😐</div>
+            <div id="heroName" class="emotion-name">Neutral</div>
+            <div id="heroConfidence" class="emotion-confidence">Confidence: --%</div>
+          </div>
+
+          <div class="panel-title" style="margin-top: 1rem;">Class Probabilities</div>
+          <div class="emotion-list" id="probabilityBars">
+            <!-- Dynamic bars inserted here -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- UPLOAD TAB -->
+    <div id="uploadView" class="content-grid" style="display: none;">
+      <div class="viewport-card">
+        <div class="viewport-header">
+          <span>Image Inspector</span>
+          <span id="uploadStatusText">Ready for image</span>
+        </div>
+        <div class="viewport-body">
+          <canvas id="uploadCanvas"></canvas>
+          <div id="uploadPrompt" class="placeholder-prompt" onclick="document.getElementById('fileInput').click()">
+            <div class="dropzone">
+              <span class="dropzone-icon">🖼️</span>
+              <strong>Click to upload or drag & drop</strong>
+              <p>Supports JPG, PNG, WEBP</p>
+            </div>
+          </div>
+          <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleFileSelect(event)">
+        </div>
+        <div class="viewport-footer">
+          <button class="btn" onclick="document.getElementById('fileInput').click()">
+            Choose Photo
+          </button>
+          <button class="btn btn-secondary" onclick="loadSample('happy')">Sample: Happy</button>
+          <button class="btn btn-secondary" onclick="loadSample('surprise')">Sample: Surprise</button>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <div class="panel-card">
+          <div class="panel-title">
+            <span>Detection Results</span>
+            <span id="uploadFaceBadge" style="font-size: 0.75rem; color: var(--accent);">--</span>
+          </div>
+          <div class="emotion-hero">
+            <div id="uploadHeroEmoji" class="emotion-emoji">🔍</div>
+            <div id="uploadHeroName" class="emotion-name">Upload a Photo</div>
+            <div id="uploadHeroConfidence" class="emotion-confidence">Awaiting input...</div>
+          </div>
+
+          <div class="panel-title" style="margin-top: 1rem;">Probability Breakdown</div>
+          <div class="emotion-list" id="uploadProbabilityBars"></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="info-footer">
+      Powered by Deep Convolutional Neural Network trained on FER-2013 dataset • Fast OpenCV Cascade Face Tracking
+    </p>
+  </main>
+
+  <script>
+    const EMOTION_MAP = {
+      'Happy': { emoji: '😄', color: '#10b981' },
+      'Sad': { emoji: '😢', color: '#3b82f6' },
+      'Angry': { emoji: '😠', color: '#ef4444' },
+      'Surprise': { emoji: '😲', color: '#f59e0b' },
+      'Neutral': { emoji: '😐', color: '#9ca3af' },
+      'Fear': { emoji: '😨', color: '#a855f7' },
+      'Disgust': { emoji: '🤢', color: '#f97316' }
+    };
+
+    const ALL_EMOTIONS = ['Happy', 'Neutral', 'Surprise', 'Sad', 'Angry', 'Fear', 'Disgust'];
+
+    let cameraStream = null;
+    let cameraActive = false;
+    let facingMode = 'user';
+    let isProcessing = false;
+    let frameInterval = null;
+    let lastFrameTime = performance.now();
+    let frameCount = 0;
+
+    const video = document.getElementById('webcamVideo');
+    const liveCanvas = document.getElementById('liveCanvas');
+    const liveCtx = liveCanvas.getContext('2d');
+    const livePrompt = document.getElementById('livePrompt');
+    const toggleCameraBtn = document.getElementById('toggleCameraBtn');
+    const switchCameraBtn = document.getElementById('switchCameraBtn');
+    const fpsCounter = document.getElementById('fpsCounter');
+
+    // Init probability bars template
+    function initBars(containerId) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = '';
+      ALL_EMOTIONS.forEach(emo => {
+        const item = document.createElement('div');
+        item.className = 'bar-row';
+        item.innerHTML = `
+          <div class="bar-label-group">
+            <span>${EMOTION_MAP[emo].emoji} ${emo}</span>
+            <span id="${containerId}-val-${emo}">0.0%</span>
+          </div>
+          <div class="bar-bg">
+            <div class="bar-fill" id="${containerId}-bar-${emo}" style="background-color: ${EMOTION_MAP[emo].color}"></div>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    initBars('probabilityBars');
+    initBars('uploadProbabilityBars');
+
+    function switchTab(tab) {
+      document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
+      document.getElementById('tabUploadBtn').classList.toggle('active', tab === 'upload');
+      document.getElementById('liveView').style.display = tab === 'live' ? 'grid' : 'none';
+      document.getElementById('uploadView').style.display = tab === 'upload' ? 'grid' : 'none';
+
+      if (tab !== 'live' && cameraActive) {
+        toggleCamera(); // Pause camera when switching tabs
+      }
+    }
+
+    async function toggleCamera() {
+      if (cameraActive) {
+        stopCamera();
+      } else {
+        await startCamera();
+      }
+    }
+
+    async function startCamera() {
+      try {
+        const constraints = {
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
+        };
+
+        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = cameraStream;
+        await video.play();
+
+        cameraActive = true;
+        livePrompt.style.display = 'none';
+        toggleCameraBtn.textContent = '⏹ Stop Camera';
+        toggleCameraBtn.className = 'btn btn-danger';
+        switchCameraBtn.style.display = 'inline-flex';
+
+        liveCanvas.width = video.videoWidth || 640;
+        liveCanvas.height = video.videoHeight || 480;
+
+        // Run detection loop at ~4-5 fps to preserve resources
+        frameInterval = setInterval(processWebcamFrame, 220);
+      } catch (err) {
+        alert("Camera access denied or unavailable: " + err.message);
+      }
+    }
+
+    function stopCamera() {
+      if (frameInterval) clearInterval(frameInterval);
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+      cameraStream = null;
+      cameraActive = false;
+      liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+      livePrompt.style.display = 'block';
+      toggleCameraBtn.textContent = '▶ Start Camera';
+      toggleCameraBtn.className = 'btn';
+      switchCameraBtn.style.display = 'none';
+      fpsCounter.textContent = 'FPS: --';
+      document.getElementById('faceCountBadge').textContent = '0 faces detected';
+    }
+
+    async function switchFacingMode() {
+      facingMode = facingMode === 'user' ? 'environment' : 'user';
+      if (cameraActive) {
+        stopCamera();
+        await startCamera();
+      }
+    }
+
+    async function processWebcamFrame() {
+      if (!cameraActive || isProcessing) return;
+
+      // Draw camera frame to canvas
+      liveCtx.drawImage(video, 0, 0, liveCanvas.width, liveCanvas.height);
+
+      // Measure FPS
+      const now = performance.now();
+      frameCount++;
+      if (now - lastFrameTime >= 1000) {
+        fpsCounter.textContent = `FPS: ${frameCount}`;
+        frameCount = 0;
+        lastFrameTime = now;
+      }
+
+      isProcessing = true;
+      try {
+        // Grab JPEG data
+        const base64Image = liveCanvas.toDataURL('image/jpeg', 0.6);
+
+        const res = await fetch('/api/detect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64Image })
+        });
+
+        const data = await res.json();
+        if (data.success && data.faces) {
+          drawAnnotations(liveCtx, data.faces, 'probabilityBars', 'heroName', 'heroEmoji', 'heroConfidence', 'faceCountBadge');
+        }
+      } catch (err) {
+        console.error("Frame detection error:", err);
+      } finally {
+        isProcessing = false;
+      }
+    }
+
+    function drawAnnotations(ctx, faces, barPrefix, heroNameId, heroEmojiId, heroConfId, badgeId) {
+      const badge = document.getElementById(badgeId);
+      if (badge) {
+        badge.textContent = `${faces.length} face${faces.length === 1 ? '' : 's'} detected`;
+      }
+
+      if (faces.length > 0) {
+        const topFace = faces[0];
+        const emotionInfo = EMOTION_MAP[topFace.emotion] || { emoji: '😐', color: '#10b981' };
+
+        document.getElementById(heroNameId).textContent = topFace.emotion;
+        document.getElementById(heroNameId).style.color = emotionInfo.color;
+        document.getElementById(heroEmojiId).textContent = emotionInfo.emoji;
+        document.getElementById(heroConfId).textContent = `Confidence: ${topFace.confidence}%`;
+
+        // Update probability bars
+        if (topFace.scores) {
+          ALL_EMOTIONS.forEach(emo => {
+            const score = topFace.scores[emo] || 0.0;
+            const bar = document.getElementById(`${barPrefix}-bar-${emo}`);
+            const val = document.getElementById(`${barPrefix}-val-${emo}`);
+            if (bar) bar.style.width = `${score}%`;
+            if (val) val.textContent = `${score}%`;
+          });
+        }
+      }
+
+      // Draw bounding boxes on faces
+      faces.forEach(face => {
+        const { x, y, w, h } = face.box;
+        const color = face.color || '#10b981';
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, w, h);
+
+        const labelText = `${face.emotion} ${face.confidence}%`;
+        ctx.font = 'bold 15px Inter, sans-serif';
+        const textWidth = ctx.measureText(labelText).width;
+
+        // Background tag
+        const tagY = y > 24 ? y - 6 : y + 20;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, tagY - 18, textWidth + 12, 22);
+
+        // Text
+        ctx.fillStyle = '#000000';
+        ctx.fillText(labelText, x + 6, tagY - 2);
+      });
+    }
+
+    // Photo Upload Handling
+    const uploadCanvas = document.getElementById('uploadCanvas');
+    const uploadCtx = uploadCanvas.getContext('2d');
+    const uploadPrompt = document.getElementById('uploadPrompt');
+
+    function handleFileSelect(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const img = new Image();
+        img.onload = function() {
+          uploadPrompt.style.display = 'none';
+          uploadCanvas.width = img.width;
+          uploadCanvas.height = img.height;
+          uploadCtx.drawImage(img, 0, 0);
+
+          sendUploadForDetection(evt.target.result);
+        };
+        img.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function sendUploadForDetection(base64Data) {
+      document.getElementById('uploadStatusText').textContent = 'Analyzing facial features...';
+      try {
+        const res = await fetch('/api/detect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64Data })
+        });
+        const data = await res.json();
+        if (data.success && data.faces) {
+          document.getElementById('uploadStatusText').textContent = 'Analysis complete';
+          drawAnnotations(uploadCtx, data.faces, 'uploadProbabilityBars', 'uploadHeroName', 'uploadHeroEmoji', 'uploadHeroConfidence', 'uploadFaceBadge');
+        } else {
+          document.getElementById('uploadStatusText').textContent = 'No faces detected';
+        }
+      } catch (err) {
+        console.error(err);
+        document.getElementById('uploadStatusText').textContent = 'Error processing image';
+      }
+    }
+
+    function loadSample(emotion) {
+      const sampleMap = {
+        happy: '/sample_images/happy.jpg',
+        surprise: '/sample_images/surprise.jpg'
+      };
+      // Fetch sample via canvas
+      const img = new Image();
+      img.onload = function() {
+        uploadPrompt.style.display = 'none';
+        uploadCanvas.width = img.width;
+        uploadCanvas.height = img.height;
+        uploadCtx.drawImage(img, 0, 0);
+        sendUploadForDetection(uploadCanvas.toDataURL('image/jpeg'));
+      };
+      // Create a test synthetic face or trigger file
+      document.getElementById('fileInput').click();
+    }
+  </script>
+</body>
+</html>
