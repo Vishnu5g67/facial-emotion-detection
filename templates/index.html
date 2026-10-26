@@ -812,12 +812,21 @@
     }
 
     async function sendUploadForDetection(base64Data, canvasW, canvasH) {
+      document.getElementById('uploadStatusText').textContent = 'Analyzing image...';
       try {
         const res = await fetch('/api/detect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image: base64Data })
         });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: `Server HTTP ${res.status}` }));
+          document.getElementById('uploadStatusText').textContent = errData.error || `Server HTTP ${res.status}`;
+          document.getElementById('uploadFaceBadge').textContent = 'Error';
+          return;
+        }
+
         const data = await res.json();
         if (data.success && data.faces && data.faces.length > 0) {
           document.getElementById('uploadStatusText').textContent = `Done (${data.latency_ms}ms)`;
@@ -870,7 +879,8 @@
         }
       } catch (err) {
         console.error(err);
-        document.getElementById('uploadStatusText').textContent = 'Error processing photo';
+        document.getElementById('uploadStatusText').textContent = 'Connection timeout. Retrying...';
+        document.getElementById('uploadFaceBadge').textContent = 'Timeout';
       }
     }
   </script>

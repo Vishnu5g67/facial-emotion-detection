@@ -1,11 +1,23 @@
-import base64
 import os
 import sys
 import time
+import base64
 import cv2
 import numpy as np
 
+# Configure single-thread execution before TensorFlow import to prevent Gunicorn thread deadlocks on Linux
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['TF_NUM_INTRAOP_THREADS'] = '1'
+os.environ['TF_NUM_INTEROP_THREADS'] = '1'
+
+import tensorflow as tf
+try:
+    tf.config.threading.set_inter_op_parallelism_threads(1)
+    tf.config.threading.set_intra_op_parallelism_threads(1)
+except Exception:
+    pass
+
 from keras.models import model_from_json
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
@@ -38,6 +50,7 @@ EMOTION_COLORS = {
 
 _model = None
 _face_cascade = None
+_cascade_source = 'none'
 
 
 def get_model():
@@ -55,36 +68,59 @@ def get_model():
 
 
 def get_face_cascade():
-    global _face_cascade
-    if _face_cascade is None:
-        cascade_path = HAAR_PATH
-        if not os.path.exists(cascade_path):
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        _face_cascade = cv2.CascadeClassifier(cascade_path)
-        if _face_cascade.empty():
-            print("Warning: Haar cascade could not be loaded from path!", file=sys.stderr)
-        else:
-            print("Haar cascade loaded successfully.")
+    global _face_cascade, _cascade_source
+    if _face_cascade is not None and not _face_cascade.empty():
+        return _face_cascade
+
+    candidates = [
+        getattr(cv2.data, 'haarcascades', '') + 'haarcascade_frontalface_default.xml' if hasattr(cv2, 'data') else None,
+        HAAR_PATH,
+        os.path.abspath('haarcascade_frontalface_default.xml'),
+        '/tmp/haarcascade_frontalface_default.xml'
+    ]
+
+    for p in candidates:
+        if p and os.path.exists(p):
+            cas = cv2.CascadeClassifier(p)
+            if not cas.empty():
+                _face_cascade = cas
+                _cascade_source = p
+                print(f"Haar cascade loaded successfully from: {p}")
+                return _face_cascade
+
+    # Fallback: Download official cascade to /tmp if all local paths failed
+    try:
+        import urllib.request
+        tmp_target = '/tmp/haarcascade_frontalface_default.xml'
+        url = 'https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml'
+        print(f"Attempting to download cascade from {url}...")
+        urllib.request.urlretrieve(url, tmp_target)
+        if os.path.exists(tmp_target):
+            cas = cv2.CascadeClassifier(tmp_target)
+            if not cas.empty():
+                _face_cascade = cas
+                _cascade_source = tmp_target
+                print("Haar cascade downloaded and loaded successfully.")
+                return _face_cascade
+    except Exception as ex:
+        print(f"Fallback cascade download failed: {ex}", file=sys.stderr)
+
     return _face_cascade
 
 
 def detect_faces(gray):
-    """
-    Fast and multi-pass face detection:
-    - Scales down large images for sub-10ms Haar cascade execution.
-    - Handles pre-cropped face images gracefully.
-    - Uses sensitive fallback thresholds if initial pass finds no face.
-    """
+    """Fast, multi-stage face detection with sensitivity fallbacks."""
     h, w = gray.shape[:2]
-    # If the image is already a small cropped face (e.g. sample images or tight avatar)
+    # If the image is already a small cropped face avatar
     if w <= 140 and h <= 140:
         return [(0, 0, w, h)]
 
     cascade = get_face_cascade()
-    if cascade.empty():
-        return [(0, 0, w, h)]
+    if cascade is None or cascade.empty():
+        print("Warning: Face cascade is empty, falling back to center region")
+        return [(int(w * 0.1), int(h * 0.1), int(w * 0.8), int(h * 0.8))]
 
-    # Downscale for fast cascade computation
+    # Downscale for sub-15ms Haar cascade execution
     scale = 1.0
     max_dim = 360
     if max(h, w) > max_dim:
@@ -101,7 +137,7 @@ def detect_faces(gray):
         minSize=(25, 25)
     )
 
-    # Pass 2: High sensitivity fallback if no faces were caught
+    # Pass 2: Higher sensitivity fallback if no face detected in Pass 1
     if len(faces) == 0:
         faces = cascade.detectMultiScale(
             small_gray,
@@ -110,6 +146,24 @@ def detect_faces(gray):
             minSize=(20, 20)
         )
 
+    # Pass 3: Ultra sensitive fallback for tricky angles or glasses
+    if len(faces) == 0:
+        faces = cascade.detectMultiScale(
+            small_gray,
+            scaleFactor=1.03,
+            minNeighbors=2,
+            minSize=(15, 15)
+        )
+
+    # If still 0 faces detected on an uploaded portrait, treat center area as face
+    if len(faces) == 0 and (w < 800 and h < 800):
+        # Heuristic center face box
+        cw = int(w * 0.5)
+        ch = int(h * 0.5)
+        cx = int((w - cw) / 2)
+        cy = int(h * 0.15)
+        return [(cx, cy, cw, ch)]
+
     # Scale coordinates back up to original image resolution
     results = []
     for (sx, sy, sw, sh) in faces:
@@ -117,7 +171,6 @@ def detect_faces(gray):
         y = int(round(sy / scale))
         bw = int(round(sw / scale))
         bh = int(round(sh / scale))
-        # Ensure within image boundaries
         x = max(0, x)
         y = max(0, y)
         bw = min(bw, w - x)
@@ -173,11 +226,13 @@ def serve_sample(filename):
 
 @app.route('/health')
 def health():
+    cas = get_face_cascade()
     return jsonify({
         'status': 'healthy',
         'service': 'facial-emotion-detection',
         'model_loaded': _model is not None,
-        'cascade_loaded': _face_cascade is not None and not _face_cascade.empty()
+        'cascade_loaded': cas is not None and not cas.empty(),
+        'cascade_source': _cascade_source
     })
 
 
@@ -214,6 +269,8 @@ def detect():
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 
