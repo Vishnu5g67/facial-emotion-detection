@@ -175,16 +175,34 @@
       overflow: hidden;
     }
 
-    video {
+    /* Video player */
+    #webcamVideo {
+      width: 100%;
+      height: 100%;
+      min-height: 440px;
+      max-height: 520px;
+      object-fit: cover;
+      transform: scaleX(-1);
       display: none;
     }
 
-    canvas {
+    /* Transparent Overlay Canvas for Bounding Boxes */
+    #overlayCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
       width: 100%;
       height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Photo Upload Canvas */
+    #uploadCanvas {
+      max-width: 100%;
       max-height: 520px;
       object-fit: contain;
-      display: block;
+      display: none;
     }
 
     .placeholder-prompt {
@@ -192,6 +210,7 @@
       text-align: center;
       color: var(--text-muted);
       padding: 2rem;
+      z-index: 20;
     }
 
     .placeholder-prompt span {
@@ -363,7 +382,6 @@
       margin-top: 0.25rem;
     }
 
-    /* Notice banner */
     .info-footer {
       font-size: 0.75rem;
       color: var(--text-muted);
@@ -397,15 +415,20 @@
       <div class="viewport-card">
         <div class="viewport-header">
           <span>Camera Viewport</span>
-          <span id="fpsCounter">FPS: --</span>
+          <span id="scanStatus">Camera: Idle</span>
         </div>
-        <div class="viewport-body">
+        <div class="viewport-body" id="cameraViewportBody">
+          <!-- Real-time smooth local video -->
           <video id="webcamVideo" autoplay playsinline muted></video>
-          <canvas id="liveCanvas"></canvas>
+          <!-- Transparent bounding box & expression overlay -->
+          <canvas id="overlayCanvas"></canvas>
+          <!-- Offscreen canvas for frame sampling -->
+          <canvas id="offscreenCanvas" style="display:none;"></canvas>
+
           <div id="livePrompt" class="placeholder-prompt">
             <span>📷</span>
-            <p><strong>Camera is currently off.</strong></p>
-            <p style="font-size: 0.85rem; margin-top: 0.25rem;">Click 'Start Camera' below to begin real-time emotion recognition.</p>
+            <p><strong>Camera is off</strong></p>
+            <p style="font-size: 0.85rem; margin-top: 0.25rem;">Click 'Start Camera' below to begin real-time facial expression detection.</p>
           </div>
         </div>
         <div class="viewport-footer">
@@ -421,19 +444,17 @@
       <div class="sidebar">
         <div class="panel-card">
           <div class="panel-title">
-            <span>Primary Emotion</span>
-            <span id="faceCountBadge" style="font-size: 0.75rem; color: var(--accent);">0 faces detected</span>
+            <span>Detected Emotion</span>
+            <span id="faceCountBadge" style="font-size: 0.75rem; color: var(--accent);">0 faces</span>
           </div>
           <div class="emotion-hero">
             <div id="heroEmoji" class="emotion-emoji">😐</div>
             <div id="heroName" class="emotion-name">Neutral</div>
-            <div id="heroConfidence" class="emotion-confidence">Confidence: --%</div>
+            <div id="heroConfidence" class="emotion-confidence">Awaiting face...</div>
           </div>
 
-          <div class="panel-title" style="margin-top: 1rem;">Class Probabilities</div>
-          <div class="emotion-list" id="probabilityBars">
-            <!-- Dynamic bars inserted here -->
-          </div>
+          <div class="panel-title" style="margin-top: 1rem;">Emotion Probabilities</div>
+          <div class="emotion-list" id="probabilityBars"></div>
         </div>
       </div>
     </div>
@@ -460,8 +481,9 @@
           <button class="btn" onclick="document.getElementById('fileInput').click()">
             Choose Photo
           </button>
-          <button class="btn btn-secondary" onclick="loadSample('happy')">Sample: Happy</button>
-          <button class="btn btn-secondary" onclick="loadSample('surprise')">Sample: Surprise</button>
+          <button class="btn btn-secondary" onclick="loadSampleImage('happy.jpg')">Sample: Happy</button>
+          <button class="btn btn-secondary" onclick="loadSampleImage('surprise.jpg')">Sample: Surprise</button>
+          <button class="btn btn-secondary" onclick="loadSampleImage('angry.jpg')">Sample: Angry</button>
         </div>
       </div>
 
@@ -474,7 +496,7 @@
           <div class="emotion-hero">
             <div id="uploadHeroEmoji" class="emotion-emoji">🔍</div>
             <div id="uploadHeroName" class="emotion-name">Upload a Photo</div>
-            <div id="uploadHeroConfidence" class="emotion-confidence">Awaiting input...</div>
+            <div id="uploadHeroConfidence" class="emotion-confidence">Awaiting image...</div>
           </div>
 
           <div class="panel-title" style="margin-top: 1rem;">Probability Breakdown</div>
@@ -484,7 +506,7 @@
     </div>
 
     <p class="info-footer">
-      Powered by Deep Convolutional Neural Network trained on FER-2013 dataset • Fast OpenCV Cascade Face Tracking
+      Deep Convolutional Neural Network trained on FER-2013 dataset • Fast Multi-Scale Face Detection
     </p>
   </main>
 
@@ -505,19 +527,18 @@
     let cameraActive = false;
     let facingMode = 'user';
     let isProcessing = false;
-    let frameInterval = null;
-    let lastFrameTime = performance.now();
-    let frameCount = 0;
 
     const video = document.getElementById('webcamVideo');
-    const liveCanvas = document.getElementById('liveCanvas');
-    const liveCtx = liveCanvas.getContext('2d');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const overlayCtx = overlayCanvas.getContext('2d');
+    const offscreenCanvas = document.getElementById('offscreenCanvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d');
     const livePrompt = document.getElementById('livePrompt');
     const toggleCameraBtn = document.getElementById('toggleCameraBtn');
     const switchCameraBtn = document.getElementById('switchCameraBtn');
-    const fpsCounter = document.getElementById('fpsCounter');
+    const scanStatus = document.getElementById('scanStatus');
 
-    // Init probability bars template
+    // Probability Bars Init
     function initBars(containerId) {
       const container = document.getElementById(containerId);
       container.innerHTML = '';
@@ -547,7 +568,7 @@
       document.getElementById('uploadView').style.display = tab === 'upload' ? 'grid' : 'none';
 
       if (tab !== 'live' && cameraActive) {
-        toggleCamera(); // Pause camera when switching tabs
+        stopCamera();
       }
     }
 
@@ -561,6 +582,7 @@
 
     async function startCamera() {
       try {
+        scanStatus.textContent = 'Opening camera...';
         const constraints = {
           video: {
             facingMode: facingMode,
@@ -572,38 +594,55 @@
 
         cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = cameraStream;
-        await video.play();
+        video.style.display = 'block';
+
+        await new Promise((resolve) => {
+          video.onloadedmetadata = () => {
+            video.play();
+            resolve();
+          };
+        });
 
         cameraActive = true;
         livePrompt.style.display = 'none';
         toggleCameraBtn.textContent = '⏹ Stop Camera';
         toggleCameraBtn.className = 'btn btn-danger';
         switchCameraBtn.style.display = 'inline-flex';
+        scanStatus.textContent = 'Scanning for faces...';
 
-        liveCanvas.width = video.videoWidth || 640;
-        liveCanvas.height = video.videoHeight || 480;
+        // Size overlay to match video dimensions
+        updateCanvasDimensions();
+        window.addEventListener('resize', updateCanvasDimensions);
 
-        // Run detection loop at ~4-5 fps to preserve resources
-        frameInterval = setInterval(processWebcamFrame, 220);
+        // Start non-blocking scan loop
+        cameraScanLoop();
       } catch (err) {
         alert("Camera access denied or unavailable: " + err.message);
+        scanStatus.textContent = 'Camera error';
       }
     }
 
+    function updateCanvasDimensions() {
+      if (!cameraActive) return;
+      overlayCanvas.width = video.videoWidth || 640;
+      overlayCanvas.height = video.videoHeight || 480;
+    }
+
     function stopCamera() {
-      if (frameInterval) clearInterval(frameInterval);
+      cameraActive = false;
       if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
       }
       cameraStream = null;
-      cameraActive = false;
-      liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+      video.style.display = 'none';
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
       livePrompt.style.display = 'block';
       toggleCameraBtn.textContent = '▶ Start Camera';
       toggleCameraBtn.className = 'btn';
       switchCameraBtn.style.display = 'none';
-      fpsCounter.textContent = 'FPS: --';
-      document.getElementById('faceCountBadge').textContent = '0 faces detected';
+      scanStatus.textContent = 'Camera: Idle';
+      document.getElementById('faceCountBadge').textContent = '0 faces';
+      window.removeEventListener('resize', updateCanvasDimensions);
     }
 
     async function switchFacingMode() {
@@ -614,25 +653,33 @@
       }
     }
 
-    async function processWebcamFrame() {
-      if (!cameraActive || isProcessing) return;
-
-      // Draw camera frame to canvas
-      liveCtx.drawImage(video, 0, 0, liveCanvas.width, liveCanvas.height);
-
-      // Measure FPS
-      const now = performance.now();
-      frameCount++;
-      if (now - lastFrameTime >= 1000) {
-        fpsCounter.textContent = `FPS: ${frameCount}`;
-        frameCount = 0;
-        lastFrameTime = now;
+    // Sequentially scans frames without flooding the server
+    async function cameraScanLoop() {
+      while (cameraActive) {
+        if (!isProcessing && video.readyState >= 2) {
+          await captureAndPredict();
+        }
+        // Wait 350ms before initiating next frame analysis
+        await new Promise(resolve => setTimeout(resolve, 350));
       }
+    }
 
+    async function captureAndPredict() {
       isProcessing = true;
       try {
-        // Grab JPEG data
-        const base64Image = liveCanvas.toDataURL('image/jpeg', 0.6);
+        const vw = video.videoWidth || 640;
+        const vh = video.videoHeight || 480;
+
+        // Downscale capture frame to max 360px for quick transmission & rapid Haar cascade
+        const scale = Math.min(1.0, 360 / Math.max(vw, vh));
+        const cw = Math.round(vw * scale);
+        const ch = Math.round(vh * scale);
+
+        offscreenCanvas.width = cw;
+        offscreenCanvas.height = ch;
+        offscreenCtx.drawImage(video, 0, 0, cw, ch);
+
+        const base64Image = offscreenCanvas.toDataURL('image/jpeg', 0.65);
 
         const res = await fetch('/api/detect', {
           method: 'POST',
@@ -641,8 +688,9 @@
         });
 
         const data = await res.json();
-        if (data.success && data.faces) {
-          drawAnnotations(liveCtx, data.faces, 'probabilityBars', 'heroName', 'heroEmoji', 'heroConfidence', 'faceCountBadge');
+        if (data.success && cameraActive) {
+          scanStatus.textContent = `Latency: ${data.latency_ms}ms • ${data.face_count} face(s)`;
+          renderCameraResults(data.faces, cw, ch, vw, vh);
         }
       } catch (err) {
         console.error("Frame detection error:", err);
@@ -651,58 +699,71 @@
       }
     }
 
-    function drawAnnotations(ctx, faces, barPrefix, heroNameId, heroEmojiId, heroConfId, badgeId) {
-      const badge = document.getElementById(badgeId);
-      if (badge) {
-        badge.textContent = `${faces.length} face${faces.length === 1 ? '' : 's'} detected`;
+    function renderCameraResults(faces, sampleW, sampleH, fullW, fullH) {
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      document.getElementById('faceCountBadge').textContent = `${faces.length} face${faces.length === 1 ? '' : 's'}`;
+
+      if (faces.length === 0) {
+        return;
       }
 
-      if (faces.length > 0) {
-        const topFace = faces[0];
-        const emotionInfo = EMOTION_MAP[topFace.emotion] || { emoji: '😐', color: '#10b981' };
+      // Update hero card with top detected face
+      const topFace = faces[0];
+      const emotionInfo = EMOTION_MAP[topFace.emotion] || { emoji: '😐', color: '#10b981' };
 
-        document.getElementById(heroNameId).textContent = topFace.emotion;
-        document.getElementById(heroNameId).style.color = emotionInfo.color;
-        document.getElementById(heroEmojiId).textContent = emotionInfo.emoji;
-        document.getElementById(heroConfId).textContent = `Confidence: ${topFace.confidence}%`;
+      document.getElementById('heroName').textContent = topFace.emotion;
+      document.getElementById('heroName').style.color = emotionInfo.color;
+      document.getElementById('heroEmoji').textContent = emotionInfo.emoji;
+      document.getElementById('heroConfidence').textContent = `Confidence: ${topFace.confidence}%`;
 
-        // Update probability bars
-        if (topFace.scores) {
-          ALL_EMOTIONS.forEach(emo => {
-            const score = topFace.scores[emo] || 0.0;
-            const bar = document.getElementById(`${barPrefix}-bar-${emo}`);
-            const val = document.getElementById(`${barPrefix}-val-${emo}`);
-            if (bar) bar.style.width = `${score}%`;
-            if (val) val.textContent = `${score}%`;
-          });
-        }
+      if (topFace.scores) {
+        ALL_EMOTIONS.forEach(emo => {
+          const score = topFace.scores[emo] || 0.0;
+          const bar = document.getElementById(`probabilityBars-bar-${emo}`);
+          const val = document.getElementById(`probabilityBars-val-${emo}`);
+          if (bar) bar.style.width = `${score}%`;
+          if (val) val.textContent = `${score}%`;
+        });
       }
 
-      // Draw bounding boxes on faces
+      // Draw bounding boxes on transparent overlay canvas
+      // Since video is CSS-mirrored (scaleX(-1)), mirror the box coordinates
+      const sx = fullW / sampleW;
+      const sy = fullH / sampleH;
+
       faces.forEach(face => {
-        const { x, y, w, h } = face.box;
+        const origX = face.box.x * sx;
+        const origY = face.box.y * sy;
+        const origW = face.box.w * sx;
+        const origH = face.box.h * sy;
+
+        // Mirrored coordinate:
+        const x = fullW - origX - origW;
+        const y = origY;
+        const w = origW;
+        const h = origH;
         const color = face.color || '#10b981';
 
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x, y, w, h);
+        // Draw bounding box
+        overlayCtx.strokeStyle = color;
+        overlayCtx.lineWidth = 3;
+        overlayCtx.strokeRect(x, y, w, h);
 
-        const labelText = `${face.emotion} ${face.confidence}%`;
-        ctx.font = 'bold 15px Inter, sans-serif';
-        const textWidth = ctx.measureText(labelText).width;
+        // Draw label badge
+        const label = `${face.emotion} ${face.confidence}%`;
+        overlayCtx.font = 'bold 16px Inter, sans-serif';
+        const textMetrics = overlayCtx.measureText(label);
+        const tagY = y > 26 ? y - 8 : y + 22;
 
-        // Background tag
-        const tagY = y > 24 ? y - 6 : y + 20;
-        ctx.fillStyle = color;
-        ctx.fillRect(x, tagY - 18, textWidth + 12, 22);
+        overlayCtx.fillStyle = color;
+        overlayCtx.fillRect(x, tagY - 20, textMetrics.width + 12, 24);
 
-        // Text
-        ctx.fillStyle = '#000000';
-        ctx.fillText(labelText, x + 6, tagY - 2);
+        overlayCtx.fillStyle = '#000000';
+        overlayCtx.fillText(label, x + 6, tagY - 2);
       });
     }
 
-    // Photo Upload Handling
+    // Photo Upload Functions
     const uploadCanvas = document.getElementById('uploadCanvas');
     const uploadCtx = uploadCanvas.getContext('2d');
     const uploadPrompt = document.getElementById('uploadPrompt');
@@ -713,22 +774,44 @@
 
       const reader = new FileReader();
       reader.onload = function(evt) {
-        const img = new Image();
-        img.onload = function() {
-          uploadPrompt.style.display = 'none';
-          uploadCanvas.width = img.width;
-          uploadCanvas.height = img.height;
-          uploadCtx.drawImage(img, 0, 0);
-
-          sendUploadForDetection(evt.target.result);
-        };
-        img.src = evt.target.result;
+        processUploadedImageSrc(evt.target.result);
       };
       reader.readAsDataURL(file);
     }
 
-    async function sendUploadForDetection(base64Data) {
-      document.getElementById('uploadStatusText').textContent = 'Analyzing facial features...';
+    function loadSampleImage(filename) {
+      processUploadedImageSrc('/sample_images/' + filename);
+    }
+
+    function processUploadedImageSrc(src) {
+      document.getElementById('uploadStatusText').textContent = 'Analyzing image...';
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function() {
+        uploadPrompt.style.display = 'none';
+        uploadCanvas.style.display = 'block';
+
+        // Downscale large photos to max 600px for instant analysis
+        const maxDim = 600;
+        let w = img.width;
+        let h = img.height;
+        if (Math.max(w, h) > maxDim) {
+          const ratio = maxDim / Math.max(w, h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+
+        uploadCanvas.width = w;
+        uploadCanvas.height = h;
+        uploadCtx.drawImage(img, 0, 0, w, h);
+
+        const base64Data = uploadCanvas.toDataURL('image/jpeg', 0.8);
+        sendUploadForDetection(base64Data, w, h);
+      };
+      img.src = src;
+    }
+
+    async function sendUploadForDetection(base64Data, canvasW, canvasH) {
       try {
         const res = await fetch('/api/detect', {
           method: 'POST',
@@ -736,34 +819,59 @@
           body: JSON.stringify({ image: base64Data })
         });
         const data = await res.json();
-        if (data.success && data.faces) {
-          document.getElementById('uploadStatusText').textContent = 'Analysis complete';
-          drawAnnotations(uploadCtx, data.faces, 'uploadProbabilityBars', 'uploadHeroName', 'uploadHeroEmoji', 'uploadHeroConfidence', 'uploadFaceBadge');
+        if (data.success && data.faces && data.faces.length > 0) {
+          document.getElementById('uploadStatusText').textContent = `Done (${data.latency_ms}ms)`;
+          document.getElementById('uploadFaceBadge').textContent = `${data.faces.length} face${data.faces.length === 1 ? '' : 's'}`;
+
+          const topFace = data.faces[0];
+          const info = EMOTION_MAP[topFace.emotion] || { emoji: '😐', color: '#10b981' };
+          document.getElementById('uploadHeroName').textContent = topFace.emotion;
+          document.getElementById('uploadHeroName').style.color = info.color;
+          document.getElementById('uploadHeroEmoji').textContent = info.emoji;
+          document.getElementById('uploadHeroConfidence').textContent = `Confidence: ${topFace.confidence}%`;
+
+          ALL_EMOTIONS.forEach(emo => {
+            const score = topFace.scores ? (topFace.scores[emo] || 0.0) : 0.0;
+            const bar = document.getElementById(`uploadProbabilityBars-bar-${emo}`);
+            const val = document.getElementById(`uploadProbabilityBars-val-${emo}`);
+            if (bar) bar.style.width = `${score}%`;
+            if (val) val.textContent = `${score}%`;
+          });
+
+          // Draw boxes on upload canvas
+          const sx = canvasW / data.width;
+          const sy = canvasH / data.height;
+
+          data.faces.forEach(face => {
+            const x = face.box.x * sx;
+            const y = face.box.y * sy;
+            const w = face.box.w * sx;
+            const h = face.box.h * sy;
+            const color = face.color || '#10b981';
+
+            uploadCtx.strokeStyle = color;
+            uploadCtx.lineWidth = 3;
+            uploadCtx.strokeRect(x, y, w, h);
+
+            const label = `${face.emotion} ${face.confidence}%`;
+            uploadCtx.font = 'bold 16px Inter, sans-serif';
+            const tm = uploadCtx.measureText(label);
+            const tagY = y > 24 ? y - 8 : y + 20;
+
+            uploadCtx.fillStyle = color;
+            uploadCtx.fillRect(x, tagY - 20, tm.width + 12, 24);
+
+            uploadCtx.fillStyle = '#000000';
+            uploadCtx.fillText(label, x + 6, tagY - 2);
+          });
         } else {
-          document.getElementById('uploadStatusText').textContent = 'No faces detected';
+          document.getElementById('uploadStatusText').textContent = 'No face detected in photo';
+          document.getElementById('uploadFaceBadge').textContent = '0 faces';
         }
       } catch (err) {
         console.error(err);
-        document.getElementById('uploadStatusText').textContent = 'Error processing image';
+        document.getElementById('uploadStatusText').textContent = 'Error processing photo';
       }
-    }
-
-    function loadSample(emotion) {
-      const sampleMap = {
-        happy: '/sample_images/happy.jpg',
-        surprise: '/sample_images/surprise.jpg'
-      };
-      // Fetch sample via canvas
-      const img = new Image();
-      img.onload = function() {
-        uploadPrompt.style.display = 'none';
-        uploadCanvas.width = img.width;
-        uploadCanvas.height = img.height;
-        uploadCtx.drawImage(img, 0, 0);
-        sendUploadForDetection(uploadCanvas.toDataURL('image/jpeg'));
-      };
-      // Create a test synthetic face or trigger file
-      document.getElementById('fileInput').click();
     }
   </script>
 </body>
