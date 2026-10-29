@@ -69,11 +69,28 @@ def get_model():
 
 def get_face_cascade():
     global _face_cascade, _cascade_source
-    if _face_cascade is not None and not _face_cascade.empty():
+    if _face_cascade is not None:
         return _face_cascade
 
+    # Safely resolve CascadeClassifier across various OpenCV builds
+    CascadeClassifierClass = None
+    if hasattr(cv2, 'CascadeClassifier'):
+        CascadeClassifierClass = cv2.CascadeClassifier
+    elif hasattr(getattr(cv2, 'objdetect', None), 'CascadeClassifier'):
+        CascadeClassifierClass = cv2.objdetect.CascadeClassifier
+
+    if CascadeClassifierClass is None:
+        print("Warning: cv2 has no CascadeClassifier attribute in this build", file=sys.stderr)
+        _cascade_source = 'unsupported_cv2_build'
+        return None
+
+    # Safe built-in cascade path check
+    data_dir = getattr(cv2, 'data', None)
+    haarcascades_dir = getattr(data_dir, 'haarcascades', None) if data_dir else None
+    builtin_xml = (haarcascades_dir + 'haarcascade_frontalface_default.xml') if haarcascades_dir else None
+
     candidates = [
-        getattr(cv2.data, 'haarcascades', '') + 'haarcascade_frontalface_default.xml' if hasattr(cv2, 'data') else None,
+        builtin_xml,
         HAAR_PATH,
         os.path.abspath('haarcascade_frontalface_default.xml'),
         '/tmp/haarcascade_frontalface_default.xml'
@@ -81,22 +98,27 @@ def get_face_cascade():
 
     for p in candidates:
         if p and os.path.exists(p):
-            cas = cv2.CascadeClassifier(p)
-            if not cas.empty():
-                _face_cascade = cas
-                _cascade_source = p
-                print(f"Haar cascade loaded successfully from: {p}")
-                return _face_cascade
+            try:
+                cas = CascadeClassifierClass(p)
+                if not cas.empty():
+                    _face_cascade = cas
+                    _cascade_source = p
+                    print(f"Haar cascade loaded successfully from: {p}")
+                    return _face_cascade
+            except Exception as e:
+                print(f"Failed to load candidate {p}: {e}", file=sys.stderr)
 
     # Fallback: Download official cascade to /tmp if all local paths failed
     try:
         import urllib.request
         tmp_target = '/tmp/haarcascade_frontalface_default.xml'
-        url = 'https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml'
-        print(f"Attempting to download cascade from {url}...")
-        urllib.request.urlretrieve(url, tmp_target)
+        if not os.path.exists(tmp_target):
+            url = 'https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml'
+            print(f"Attempting to download cascade from {url}...")
+            urllib.request.urlretrieve(url, tmp_target)
+
         if os.path.exists(tmp_target):
-            cas = cv2.CascadeClassifier(tmp_target)
+            cas = CascadeClassifierClass(tmp_target)
             if not cas.empty():
                 _face_cascade = cas
                 _cascade_source = tmp_target
@@ -109,7 +131,7 @@ def get_face_cascade():
 
 
 def detect_faces(gray):
-    """Fast, multi-stage face detection with sensitivity fallbacks."""
+    """Fast, multi-stage face detection with sensitivity and center-crop fallbacks."""
     h, w = gray.shape[:2]
     # If the image is already a small cropped face avatar
     if w <= 140 and h <= 140:
@@ -117,8 +139,12 @@ def detect_faces(gray):
 
     cascade = get_face_cascade()
     if cascade is None or cascade.empty():
-        print("Warning: Face cascade is empty, falling back to center region")
-        return [(int(w * 0.1), int(h * 0.1), int(w * 0.8), int(h * 0.8))]
+        # Fallback to center portrait region if cascade is unavailable
+        cw = int(w * 0.6)
+        ch = int(h * 0.6)
+        cx = int((w - cw) / 2)
+        cy = int(h * 0.15)
+        return [(cx, cy, cw, ch)]
 
     # Downscale for sub-15ms Haar cascade execution
     scale = 1.0
@@ -157,7 +183,6 @@ def detect_faces(gray):
 
     # If still 0 faces detected on an uploaded portrait, treat center area as face
     if len(faces) == 0 and (w < 800 and h < 800):
-        # Heuristic center face box
         cw = int(w * 0.5)
         ch = int(h * 0.5)
         cx = int((w - cw) / 2)
@@ -226,14 +251,18 @@ def serve_sample(filename):
 
 @app.route('/health')
 def health():
-    cas = get_face_cascade()
-    return jsonify({
-        'status': 'healthy',
-        'service': 'facial-emotion-detection',
-        'model_loaded': _model is not None,
-        'cascade_loaded': cas is not None and not cas.empty(),
-        'cascade_source': _cascade_source
-    })
+    try:
+        cas = get_face_cascade()
+        return jsonify({
+            'status': 'healthy',
+            'service': 'facial-emotion-detection',
+            'model_loaded': _model is not None,
+            'cascade_loaded': cas is not None and not cas.empty(),
+            'cascade_source': _cascade_source,
+            'cv2_version': getattr(cv2, '__version__', 'unknown')
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
 @app.route('/api/detect', methods=['POST'])
